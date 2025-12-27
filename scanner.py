@@ -18,6 +18,7 @@ import os
 # 1. 股票池
 # ============================================================================
 
+# 纳斯达克100
 NASDAQ_100 = [
     "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "GOOG", "TSLA", "AVGO", "COST",
     "PEP", "CSCO", "NFLX", "AMD", "ADBE", "TMUS", "CMCSA", "INTC", "INTU", "QCOM",
@@ -31,9 +32,57 @@ NASDAQ_100 = [
     "SIRI", "CEG", "TTWO", "GFS", "LCID", "RIVN", "WBA", "JD", "PDD", "BIDU"
 ]
 
-EXTRA_WATCHLIST = [
-    "MSTR", "COIN", "HOOD", "CRWV", "PLTR", "SOFI", "RKLB", "IONQ", "RGTI", "QUBT"
+# 标普500 (不含纳斯达克100重复的)
+SP500_EXTRA = [
+    # 金融
+    "JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP", "USB",
+    "PNC", "TFC", "COF", "BK", "STT", "AIG", "MET", "PRU", "ALL", "TRV",
+    "AFL", "CB", "CME", "ICE", "MCO", "SPGI", "MMC", "AON", "MSCI",
+    # 医疗
+    "UNH", "JNJ", "PFE", "LLY", "ABBV", "MRK", "TMO", "ABT", "DHR", "BMY",
+    "AMGN", "CVS", "ELV", "CI", "HCA", "HUM", "MCK", "CAH", "ZTS", "SYK",
+    "BSX", "MDT", "EW", "DXCM", "IDXX", "IQV", "A", "BIO", "TECH",
+    # 消费
+    "WMT", "HD", "MCD", "NKE", "LOW", "TGT", "SBUX", "TJX", "ORLY", "AZO",
+    "ROST", "DG", "DLTR", "CMG", "YUM", "DPZ", "EBAY", "ETSY", "BBY",
+    "KMB", "CL", "PG", "KO", "MO", "PM", "EL", "CLX", "CHD", "SJM",
+    # 工业
+    "CAT", "BA", "HON", "UPS", "RTX", "DE", "LMT", "GE", "MMM", "EMR",
+    "ITW", "PH", "ROK", "ETN", "PCAR", "CMI", "WM", "RSG", "FDX", "NSC",
+    "UNP", "CSX", "DAL", "UAL", "LUV", "AAL",
+    # 能源
+    "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "PXD",
+    "DVN", "HES", "HAL", "KMI", "WMB", "OKE",
+    # 通信/媒体
+    "DIS", "CMCSA", "T", "VZ", "CHTR", "NFLX", "PARA", "FOX", "FOXA",
+    "OMC", "IPG",
+    # 公用事业
+    "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "PEG", "ED",
+    "WEC", "ES", "AWK",
+    # 材料
+    "LIN", "APD", "SHW", "ECL", "DD", "NEM", "FCX", "NUE", "VMC", "MLM",
+    # 房地产
+    "AMT", "PLD", "CCI", "EQIX", "PSA", "SPG", "O", "WELL", "DLR", "AVB",
+    "EQR", "VTR", "ARE", "MAA", "UDR",
+    # 其他大盘
+    "BRK-B", "V", "MA", "ACN", "CRM", "ORCL", "IBM", "NOW", "UBER", "ABNB",
+    "SQ", "SHOP", "SNOW", "DDOG", "NET", "ZM", "DOCU", "OKTA", "TWLO"
 ]
+
+# 高波动/主题股票
+EXTRA_WATCHLIST = [
+    # 加密相关
+    "MSTR", "COIN", "HOOD", "MARA", "RIOT", "CLSK",
+    # 量子计算
+    "IONQ", "RGTI", "QUBT",
+    # AI/成长
+    "PLTR", "SOFI", "RKLB", "PATH", "AI",
+    # 中概股
+    "BABA", "NIO", "XPEV", "LI"
+]
+
+# 合并所有股票池
+ALL_STOCKS = list(set(NASDAQ_100 + SP500_EXTRA + EXTRA_WATCHLIST))
 
 # ============================================================================
 # 2. 技术指标计算
@@ -546,7 +595,7 @@ def main():
     print("   新增: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分")
     print("="*100)
     
-    all_symbols = list(set(NASDAQ_100 + EXTRA_WATCHLIST))
+    all_symbols = ALL_STOCKS
     print(f"\n📋 股票池: {len(all_symbols)} 只股票")
     print(f"📊 市值筛选: ≥ 100亿美元")
     print(f"📈 超买阈值: WT1 ≥ 60")
