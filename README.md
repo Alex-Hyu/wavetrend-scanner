@@ -1,125 +1,85 @@
-# 📊 WaveTrend 日线扫描器
+# 📊 WaveTrend 扫描器 V2.0
 
-扫描纳斯达克100及高波动股票，寻找超买/超卖机会。
+扫描纳斯达克100及高波动股票，寻找超买/超卖 + 反转确认信号。
 
-## 功能特点
+## 🆕 V2.0 新增功能
 
-- 🔍 扫描 100+ 只美股
-- 📊 WaveTrend 指标计算
-- 📈 市值筛选（默认 ≥ 100亿美元）
-- 🟢 超卖信号 (WT1 ≤ -60)
-- 🔴 超买信号 (WT1 ≥ 60)
-- 🔔 金叉/死叉检测
-- 📱 Telegram 通知（可选）
-- ⏰ GitHub Actions 自动运行
+| 功能 | 说明 |
+|------|------|
+| **背离检测** | 摆动点方法，检测价格与WT1的背离 |
+| **RSI双重确认** | RSI < 30 超卖 / RSI > 70 超买 |
+| **成交量分析** | 放量/缩量判断，量价配合确认 |
+| **综合评分** | 满分9分，按评分排序 |
 
-## 使用方式
+## 📊 评分系统
 
-### 方式1：本地运行
+| 条件 | 分数 | 说明 |
+|------|------|------|
+| WT超买/超卖 | +1 | WT1 ≤ -60 或 ≥ 60 |
+| 金叉/死叉 | +2 | WT1 上穿/下穿 WT2 |
+| WT1拐头 | +1 | 方向改变 |
+| 背离 | +2 | 价格新低但WT1更高（或反之） |
+| RSI确认 | +1 | RSI < 30 或 > 70 |
+| 成交量确认 | +1 | 缩量企稳或放量反弹 |
+
+**评分等级：**
+- A级 (≥5分) ⭐⭐⭐ 强反转信号
+- B级 (3-4分) ⭐⭐ 中等信号
+- C级 (2分) ⭐ 弱信号
+- D级 (<2分) 仅超买超卖，无确认
+
+## 🚀 使用方式
+
+### 本地运行
 
 ```bash
-# 安装依赖
 pip install -r requirements.txt
 
-# 运行扫描器
+# 命令行扫描
 python scanner.py
-```
 
-### 方式2：Streamlit 网页界面
-
-```bash
-# 本地运行
+# 网页界面
 streamlit run app.py
-
-# 或部署到 Streamlit Cloud
-# 1. Fork 这个仓库
-# 2. 访问 share.streamlit.io
-# 3. 连接你的 GitHub 仓库
-# 4. 选择 app.py 作为入口
 ```
 
-### 方式3：GitHub Actions 自动运行
+### Streamlit Cloud 部署
 
-1. Fork 这个仓库
-2. 在 Settings > Secrets 添加（可选）：
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_CHAT_ID`
-3. 启用 Actions
-4. 每天美股收盘后自动扫描
+1. 上传到 GitHub
+2. 访问 share.streamlit.io
+3. 连接仓库，选择 app.py
+4. 部署完成
 
-## WaveTrend 指标说明
+## 📖 背离检测原理
 
-WaveTrend 是一个基于 HLC3 的动量指标：
-
+**看涨背离（底背离）：**
 ```
-AP = (High + Low + Close) / 3
-ESA = EMA(AP, 10)
-D = EMA(|AP - ESA|, 10)
-CI = (AP - ESA) / (0.015 * D)
-WT1 = EMA(CI, 21)
-WT2 = SMA(WT1, 4)
+价格: 创新低 ↓
+WT1:  没有新低 ↑
+= 卖压衰竭，可能反转向上
 ```
 
-**信号解读：**
-
-| WT1 值 | 信号 | 含义 |
-|--------|------|------|
-| ≥ 60 | 🔴 超买 | 可能见顶，考虑止盈 |
-| 53-60 | 🟡 接近超买 | 观察，可能即将超买 |
-| -53 to 53 | ⚪ 中性 | 无明确信号 |
-| -60 to -53 | 🟡 接近超卖 | 观察，可能即将超卖 |
-| ≤ -60 | 🟢 超卖 | 可能见底，寻找做多机会 |
-
-**交叉信号：**
-- 🔼 金叉：WT1 上穿 WT2，看涨
-- 🔽 死叉：WT1 下穿 WT2，看跌
-
-## 股票池
-
-### 纳斯达克100
-AAPL, MSFT, AMZN, NVDA, GOOGL, META, TSLA, AVGO, COST, PEP, CSCO, NFLX, AMD, ADBE...
-
-### 高波动股票（可选）
-MSTR, COIN, HOOD, CRWV, PLTR, SOFI, RKLB, IONQ, RGTI, QUBT
-
-## 配置 Telegram 通知
-
-1. 创建 Telegram Bot：
-   - 找 @BotFather
-   - 发送 `/newbot`
-   - 获取 Bot Token
-
-2. 获取 Chat ID：
-   - 找 @userinfobot
-   - 发送任意消息
-   - 获取你的 Chat ID
-
-3. 添加 GitHub Secrets：
-   - `TELEGRAM_BOT_TOKEN`: 你的 Bot Token
-   - `TELEGRAM_CHAT_ID`: 你的 Chat ID
-
-4. 启用 GitHub Actions 中的 Telegram 通知
-
-## 文件结构
-
+**看跌背离（顶背离）：**
 ```
-wavetrend_scanner/
-├── scanner.py              # 主扫描程序
-├── app.py                  # Streamlit 网页界面
-├── notify_telegram.py      # Telegram 通知模块
-├── requirements.txt        # Python 依赖
-├── README.md               # 说明文档
-├── data/                   # 扫描结果存储
-│   └── latest_scan.json
-└── .github/
-    └── workflows/
-        └── daily_scan.yml  # GitHub Actions 配置
+价格: 创新高 ↑
+WT1:  没有新高 ↓
+= 买压衰竭，可能反转向下
 ```
 
-## 免责声明
+## 📋 输出示例
+
+```
+🟢 超卖信号 (WT1 ≤ -60) - 潜在做多机会 [3只] 【按评分排序】
+
+评分   | 股票     | 价格       | 涨跌%  | WT1     | 方向 | RSI   | 成交量   | 背离     | 交叉
+-------|----------|------------|--------|---------|------|-------|----------|----------|--------
+5/9 ⭐⭐⭐ | ENPH     | $65.23     | +1.52% | -65.18  | ↑    | 28.5  | 📉缩量   | ✅底背离 | 🔼 金叉
+       └─ WT超卖, 金叉, 拐头↑, 底背离, RSI<30
+4/9 ⭐⭐ | MRNA     | $38.52     | -0.85% | -68.32  | ↓    | 25.2  | 📉缩量   | ✅底背离 |
+       └─ WT超卖, 底背离, RSI<30, 缩量
+2/9 ⭐  | ILMN     | $102.45    | +0.32% | -61.05  | →    | 35.8  | 正常     |          |
+       └─ WT超卖, 拐头↑
+```
+
+## ⚠️ 免责声明
 
 本工具仅供学习和参考，不构成投资建议。投资有风险，入市需谨慎。
-
-## License
-
-MIT

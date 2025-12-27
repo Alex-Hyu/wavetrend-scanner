@@ -1,71 +1,27 @@
 """
-WaveTrend 扫描器 - Streamlit 网页界面
+WaveTrend 扫描器 V2.0 - Streamlit 网页界面
+新增: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分
 """
 
 import streamlit as st
 import pandas as pd
-import json
-import os
-from datetime import datetime
-import yfinance as yf
 import numpy as np
+import yfinance as yf
+from datetime import datetime
 
 # ============================================================================
 # 页面配置
 # ============================================================================
 
 st.set_page_config(
-    page_title="WaveTrend 扫描器",
+    page_title="WaveTrend 扫描器 V2.0",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ============================================================================
-# 样式
-# ============================================================================
-
-st.markdown("""
-<style>
-    .big-font {
-        font-size: 24px !important;
-        font-weight: bold;
-    }
-    .metric-card {
-        background-color: #1E1E1E;
-        border-radius: 10px;
-        padding: 20px;
-        margin: 10px 0;
-    }
-    .oversold {
-        color: #00FF88;
-    }
-    .overbought {
-        color: #FF4444;
-    }
-    .neutral {
-        color: #FFAA00;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# WaveTrend 计算函数
-# ============================================================================
-
-def calc_wavetrend(df, n1=10, n2=21):
-    """计算 WaveTrend 指标"""
-    ap = (df['High'] + df['Low'] + df['Close']) / 3
-    esa = ap.ewm(span=n1, adjust=False).mean()
-    d = (ap - esa).abs().ewm(span=n1, adjust=False).mean()
-    d = d.replace(0, np.nan)
-    ci = (ap - esa) / (0.015 * d)
-    wt1 = ci.ewm(span=n2, adjust=False).mean()
-    wt2 = wt1.rolling(window=4).mean()
-    return wt1, wt2
-
-# ============================================================================
-# 股票池定义
+# 股票池
 # ============================================================================
 
 NASDAQ_100 = [
@@ -86,12 +42,169 @@ EXTRA_WATCHLIST = [
 ]
 
 # ============================================================================
+# 技术指标计算
+# ============================================================================
+
+def calc_wavetrend(df, n1=10, n2=21):
+    ap = (df['High'] + df['Low'] + df['Close']) / 3
+    esa = ap.ewm(span=n1, adjust=False).mean()
+    d = (ap - esa).abs().ewm(span=n1, adjust=False).mean()
+    d = d.replace(0, np.nan)
+    ci = (ap - esa) / (0.015 * d)
+    wt1 = ci.ewm(span=n2, adjust=False).mean()
+    wt2 = wt1.rolling(window=4).mean()
+    return wt1, wt2
+
+def calc_rsi(df, period=14):
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calc_volume_ratio(df, period=20):
+    vol_ma = df['Volume'].rolling(window=period).mean()
+    vol_ratio = df['Volume'] / vol_ma
+    return vol_ratio
+
+# ============================================================================
+# 摆动点和背离检测
+# ============================================================================
+
+def find_swing_lows(df, window=5):
+    lows = []
+    for i in range(window, len(df) - window):
+        current_low = df['Low'].iloc[i]
+        range_low = df['Low'].iloc[i-window:i+window+1].min()
+        if current_low == range_low:
+            lows.append(i)
+    return lows
+
+def find_swing_highs(df, window=5):
+    highs = []
+    for i in range(window, len(df) - window):
+        current_high = df['High'].iloc[i]
+        range_high = df['High'].iloc[i-window:i+window+1].max()
+        if current_high == range_high:
+            highs.append(i)
+    return highs
+
+def detect_divergence(df, wt1, lookback=30, swing_window=5):
+    bullish_div = False
+    bearish_div = False
+    div_details = ""
+    
+    recent_df = df.iloc[-lookback:].copy()
+    recent_wt1 = wt1.iloc[-lookback:].copy()
+    
+    # 看涨背离
+    swing_lows = find_swing_lows(recent_df, window=swing_window)
+    if len(swing_lows) >= 2:
+        latest_idx = swing_lows[-1]
+        prev_idx = swing_lows[-2]
+        
+        price_latest = recent_df['Low'].iloc[latest_idx]
+        price_prev = recent_df['Low'].iloc[prev_idx]
+        wt1_latest = recent_wt1.iloc[latest_idx]
+        wt1_prev = recent_wt1.iloc[prev_idx]
+        
+        if price_latest < price_prev and wt1_latest > wt1_prev:
+            bullish_div = True
+            div_details = f"底背离: ${price_prev:.1f}→${price_latest:.1f}"
+    
+    # 看跌背离
+    swing_highs = find_swing_highs(recent_df, window=swing_window)
+    if len(swing_highs) >= 2:
+        latest_idx = swing_highs[-1]
+        prev_idx = swing_highs[-2]
+        
+        price_latest = recent_df['High'].iloc[latest_idx]
+        price_prev = recent_df['High'].iloc[prev_idx]
+        wt1_latest = recent_wt1.iloc[latest_idx]
+        wt1_prev = recent_wt1.iloc[prev_idx]
+        
+        if price_latest > price_prev and wt1_latest < wt1_prev:
+            bearish_div = True
+            div_details = f"顶背离: ${price_prev:.1f}→${price_latest:.1f}"
+    
+    return bullish_div, bearish_div, div_details
+
+# ============================================================================
+# 评分系统
+# ============================================================================
+
+def calc_reversal_score(result, is_oversold=True):
+    score = 0
+    details = []
+    
+    if is_oversold:
+        if result['wt1'] <= -60:
+            score += 1
+            details.append("WT超卖")
+        if "金叉" in result.get('cross', ''):
+            score += 2
+            details.append("金叉")
+        if result.get('wt_direction') == '↑':
+            score += 1
+            details.append("拐头↑")
+        if result.get('bullish_div'):
+            score += 2
+            details.append("底背离")
+        if result.get('rsi', 50) < 30:
+            score += 1
+            details.append("RSI<30")
+        vol_ratio = result.get('vol_ratio', 1.0)
+        price_change = result.get('price_change', 0)
+        if vol_ratio < 0.8:
+            score += 1
+            details.append("缩量")
+        elif vol_ratio > 1.5 and price_change > 0:
+            score += 1
+            details.append("放量涨")
+    else:
+        if result['wt1'] >= 60:
+            score += 1
+            details.append("WT超买")
+        if "死叉" in result.get('cross', ''):
+            score += 2
+            details.append("死叉")
+        if result.get('wt_direction') == '↓':
+            score += 1
+            details.append("拐头↓")
+        if result.get('bearish_div'):
+            score += 2
+            details.append("顶背离")
+        if result.get('rsi', 50) > 70:
+            score += 1
+            details.append("RSI>70")
+        vol_ratio = result.get('vol_ratio', 1.0)
+        price_change = result.get('price_change', 0)
+        if vol_ratio < 0.8:
+            score += 1
+            details.append("缩量")
+        elif vol_ratio > 1.5 and price_change < 0:
+            score += 1
+            details.append("放量跌")
+    
+    return score, details
+
+def get_score_grade(score):
+    if score >= 5:
+        return "A", "⭐⭐⭐"
+    elif score >= 3:
+        return "B", "⭐⭐"
+    elif score >= 2:
+        return "C", "⭐"
+    else:
+        return "D", ""
+
+# ============================================================================
 # 扫描函数
 # ============================================================================
 
-@st.cache_data(ttl=300)  # 缓存5分钟
+@st.cache_data(ttl=300)
 def scan_single_stock(symbol):
-    """扫描单只股票"""
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="3mo")
@@ -103,6 +216,8 @@ def scan_single_stock(symbol):
         market_cap = info.get('marketCap', 0)
         
         wt1, wt2 = calc_wavetrend(df)
+        rsi = calc_rsi(df)
+        vol_ratio = calc_volume_ratio(df)
         
         if wt1.isna().iloc[-1]:
             return None
@@ -114,8 +229,10 @@ def scan_single_stock(symbol):
         current_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2] if len(df) > 1 else current_price
         price_change = (current_price / prev_price - 1) * 100
+        current_rsi = rsi.iloc[-1]
+        current_vol_ratio = vol_ratio.iloc[-1]
         
-        # 判断交叉
+        # 金叉/死叉
         cross = ""
         if current_wt1 > current_wt2 and prev_wt1 <= prev_wt2:
             cross = "🔼 金叉"
@@ -124,24 +241,20 @@ def scan_single_stock(symbol):
         
         wt_direction = "↑" if current_wt1 > prev_wt1 else "↓" if current_wt1 < prev_wt1 else "→"
         
-        # 信号判断
-        if current_wt1 >= 60:
-            signal = "🔴 超买"
-            signal_type = "overbought"
-        elif current_wt1 <= -60:
-            signal = "🟢 超卖"
-            signal_type = "oversold"
-        elif current_wt1 >= 53:
-            signal = "🟡 接近超买"
-            signal_type = "approaching_ob"
-        elif current_wt1 <= -53:
-            signal = "🟡 接近超卖"
-            signal_type = "approaching_os"
-        else:
-            signal = "⚪ 中性"
-            signal_type = "neutral"
+        # 背离
+        bullish_div, bearish_div, div_details = detect_divergence(df, wt1)
         
-        return {
+        # 成交量状态
+        if current_vol_ratio >= 2.0:
+            vol_status = "🔥暴量"
+        elif current_vol_ratio >= 1.5:
+            vol_status = "📈放量"
+        elif current_vol_ratio < 0.7:
+            vol_status = "📉缩量"
+        else:
+            vol_status = "正常"
+        
+        result = {
             'symbol': symbol,
             'price': round(current_price, 2),
             'price_change': round(price_change, 2),
@@ -149,15 +262,20 @@ def scan_single_stock(symbol):
             'wt2': round(current_wt2, 2),
             'wt_direction': wt_direction,
             'cross': cross,
+            'rsi': round(current_rsi, 1),
+            'vol_ratio': round(current_vol_ratio, 2),
+            'vol_status': vol_status,
+            'bullish_div': bullish_div,
+            'bearish_div': bearish_div,
+            'div_details': div_details,
             'market_cap_b': round(market_cap / 1e9, 1) if market_cap else 0,
-            'signal': signal,
-            'signal_type': signal_type
         }
+        
+        return result
     except Exception as e:
         return None
 
-def scan_all_stocks(symbols, min_market_cap_b=10, progress_bar=None):
-    """扫描所有股票"""
+def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=None):
     results = []
     
     for i, symbol in enumerate(symbols):
@@ -166,6 +284,32 @@ def scan_all_stocks(symbols, min_market_cap_b=10, progress_bar=None):
         
         result = scan_single_stock(symbol)
         if result and result['market_cap_b'] >= min_market_cap_b:
+            # 分类
+            if result['wt1'] <= os_level:
+                result['signal'] = '🟢 超卖'
+                result['signal_type'] = 'oversold'
+                score, details = calc_reversal_score(result, is_oversold=True)
+            elif result['wt1'] >= ob_level:
+                result['signal'] = '🔴 超买'
+                result['signal_type'] = 'overbought'
+                score, details = calc_reversal_score(result, is_oversold=False)
+            elif result['wt1'] <= -53:
+                result['signal'] = '🟡 接近超卖'
+                result['signal_type'] = 'approaching_os'
+                score, details = calc_reversal_score(result, is_oversold=True)
+            elif result['wt1'] >= 53:
+                result['signal'] = '🟡 接近超买'
+                result['signal_type'] = 'approaching_ob'
+                score, details = calc_reversal_score(result, is_oversold=False)
+            else:
+                result['signal'] = '⚪ 中性'
+                result['signal_type'] = 'neutral'
+                score, details = 0, []
+            
+            result['score'] = score
+            result['score_details'] = ', '.join(details)
+            result['grade'], result['stars'] = get_score_grade(score)
+            
             results.append(result)
     
     return results
@@ -175,44 +319,35 @@ def scan_all_stocks(symbols, min_market_cap_b=10, progress_bar=None):
 # ============================================================================
 
 def main():
-    st.title("📊 WaveTrend 日线扫描器")
-    st.markdown("扫描纳斯达克100及高波动股票，寻找超买/超卖机会")
+    st.title("📊 WaveTrend 扫描器 V2.0")
+    st.markdown("**新增**: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分")
     
-    # 侧边栏设置
+    # 侧边栏
     with st.sidebar:
         st.header("⚙️ 设置")
         
-        min_market_cap = st.slider(
-            "最小市值 (十亿美元)",
-            min_value=1,
-            max_value=100,
-            value=10,
-            step=1
-        )
-        
-        ob_level = st.slider(
-            "超买阈值",
-            min_value=50,
-            max_value=80,
-            value=60
-        )
-        
-        os_level = st.slider(
-            "超卖阈值",
-            min_value=-80,
-            max_value=-50,
-            value=-60
-        )
-        
-        include_extra = st.checkbox("包含高波动股票 (MSTR, COIN等)", value=True)
+        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 10)
+        ob_level = st.slider("超买阈值", 50, 80, 60)
+        os_level = st.slider("超卖阈值", -80, -50, -60)
+        include_extra = st.checkbox("包含高波动股票", value=True)
         
         st.markdown("---")
-        st.markdown("### 📖 WaveTrend 说明")
+        st.markdown("### 📖 评分说明 (满分9分)")
         st.markdown("""
-        - **WT1 ≥ 60**: 超买，可能见顶
-        - **WT1 ≤ -60**: 超卖，可能见底
-        - **金叉**: WT1上穿WT2，看涨
-        - **死叉**: WT1下穿WT2，看跌
+        | 条件 | 分数 |
+        |------|------|
+        | WT超买/超卖 | +1 |
+        | 金叉/死叉 | +2 |
+        | WT1拐头 | +1 |
+        | 背离 | +2 |
+        | RSI确认 | +1 |
+        | 成交量确认 | +1 |
+        """)
+        st.markdown("""
+        **等级**:
+        - A级 (≥5分) ⭐⭐⭐ 强信号
+        - B级 (3-4分) ⭐⭐ 中等
+        - C级 (2分) ⭐ 弱信号
         """)
     
     # 股票池
@@ -230,36 +365,42 @@ def main():
         st.metric("市值筛选", f"≥ {min_market_cap}B")
     
     if scan_button:
-        # 进度条
         progress_bar = st.progress(0, "准备扫描...")
-        
-        # 扫描
-        results = scan_all_stocks(symbols, min_market_cap, progress_bar)
+        results = scan_all_stocks(symbols, min_market_cap, ob_level, os_level, progress_bar)
         progress_bar.empty()
         
-        # 分类结果
-        oversold = [r for r in results if r['wt1'] <= os_level]
-        overbought = [r for r in results if r['wt1'] >= ob_level]
-        approaching_os = [r for r in results if os_level < r['wt1'] <= -53]
-        approaching_ob = [r for r in results if 53 <= r['wt1'] < ob_level]
+        # 分类并按评分排序
+        oversold = sorted([r for r in results if r['signal_type'] == 'oversold'], key=lambda x: x['score'], reverse=True)
+        overbought = sorted([r for r in results if r['signal_type'] == 'overbought'], key=lambda x: x['score'], reverse=True)
+        approaching_os = sorted([r for r in results if r['signal_type'] == 'approaching_os'], key=lambda x: x['score'], reverse=True)
+        approaching_ob = sorted([r for r in results if r['signal_type'] == 'approaching_ob'], key=lambda x: x['score'], reverse=True)
         
-        # 显示统计
+        # 统计
         st.markdown("---")
         st.subheader("📈 扫描结果统计")
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("🟢 超卖", len(oversold), help="潜在做多机会")
+            st.metric("🟢 超卖", len(oversold))
         with col2:
             st.metric("🟡 接近超卖", len(approaching_os))
         with col3:
-            st.metric("🔴 超买", len(overbought), help="潜在见顶/止盈")
+            st.metric("🔴 超买", len(overbought))
         with col4:
             st.metric("🟡 接近超买", len(approaching_ob))
         
+        # 高评分提示
+        high_score_os = [r for r in oversold if r['score'] >= 3]
+        high_score_ob = [r for r in overbought if r['score'] >= 3]
+        
+        if high_score_os:
+            st.success(f"⭐ 高评分做多机会 (≥3分): **{', '.join([r['symbol'] for r in high_score_os])}**")
+        if high_score_ob:
+            st.warning(f"⭐ 高评分见顶/止盈 (≥3分): **{', '.join([r['symbol'] for r in high_score_ob])}**")
+        
         st.markdown("---")
         
-        # Tab 显示详细结果
+        # Tab 显示
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             f"🟢 超卖 ({len(oversold)})",
             f"🟡 接近超卖 ({len(approaching_os)})",
@@ -268,11 +409,16 @@ def main():
             "📋 全部"
         ])
         
-        def display_table(data, title):
+        def display_table(data):
             if data:
                 df = pd.DataFrame(data)
-                df = df[['symbol', 'price', 'price_change', 'wt1', 'wt2', 'wt_direction', 'cross', 'market_cap_b', 'signal']]
-                df.columns = ['股票', '价格', '涨跌%', 'WT1', 'WT2', '方向', '交叉', '市值(B)', '信号']
+                
+                # 添加背离列
+                df['背离'] = df.apply(lambda x: '✅底背离' if x.get('bullish_div') else ('✅顶背离' if x.get('bearish_div') else ''), axis=1)
+                
+                df = df[['score', 'stars', 'symbol', 'price', 'price_change', 'wt1', 'wt_direction', 'rsi', 'vol_status', '背离', 'cross', 'score_details', 'market_cap_b']]
+                df.columns = ['评分', '等级', '股票', '价格', '涨跌%', 'WT1', '方向', 'RSI', '成交量', '背离', '交叉', '评分详情', '市值(B)']
+                
                 st.dataframe(
                     df,
                     hide_index=True,
@@ -281,61 +427,38 @@ def main():
                         "价格": st.column_config.NumberColumn(format="$%.2f"),
                         "涨跌%": st.column_config.NumberColumn(format="%.2f%%"),
                         "WT1": st.column_config.NumberColumn(format="%.2f"),
-                        "WT2": st.column_config.NumberColumn(format="%.2f"),
+                        "RSI": st.column_config.NumberColumn(format="%.1f"),
                         "市值(B)": st.column_config.NumberColumn(format="%.1f"),
                     }
                 )
             else:
-                st.info(f"没有{title}信号")
+                st.info("没有符合条件的股票")
         
         with tab1:
-            st.subheader("🟢 超卖股票 (WT1 ≤ -60)")
-            st.markdown("*潜在做多机会，注意确认反转信号*")
-            oversold_sorted = sorted(oversold, key=lambda x: x['wt1'])
-            display_table(oversold_sorted, "超卖")
+            st.subheader("🟢 超卖股票 (WT1 ≤ -60) - 按评分排序")
+            st.markdown("*潜在做多机会，评分越高反转可能性越大*")
+            display_table(oversold)
         
         with tab2:
             st.subheader("🟡 接近超卖 (-60 < WT1 ≤ -53)")
-            st.markdown("*观察名单，可能即将触发超卖*")
-            approaching_os_sorted = sorted(approaching_os, key=lambda x: x['wt1'])
-            display_table(approaching_os_sorted, "接近超卖")
+            display_table(approaching_os)
         
         with tab3:
-            st.subheader("🔴 超买股票 (WT1 ≥ 60)")
+            st.subheader("🔴 超买股票 (WT1 ≥ 60) - 按评分排序")
             st.markdown("*潜在见顶信号，考虑止盈或观望*")
-            overbought_sorted = sorted(overbought, key=lambda x: x['wt1'], reverse=True)
-            display_table(overbought_sorted, "超买")
+            display_table(overbought)
         
         with tab4:
             st.subheader("🟡 接近超买 (53 ≤ WT1 < 60)")
-            st.markdown("*观察名单，可能即将触发超买*")
-            approaching_ob_sorted = sorted(approaching_ob, key=lambda x: x['wt1'], reverse=True)
-            display_table(approaching_ob_sorted, "接近超买")
+            display_table(approaching_ob)
         
         with tab5:
-            st.subheader("📋 全部扫描结果")
-            all_sorted = sorted(results, key=lambda x: x['wt1'])
-            display_table(all_sorted, "")
-        
-        # 保存结果到 session state
-        st.session_state['last_scan'] = {
-            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'results': results,
-            'oversold': oversold,
-            'overbought': overbought
-        }
+            st.subheader("📋 全部扫描结果 - 按评分排序")
+            all_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
+            display_table(all_sorted)
         
         st.markdown("---")
         st.caption(f"⏰ 扫描完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # 显示上次扫描结果
-    elif 'last_scan' in st.session_state:
-        st.info(f"📅 上次扫描时间: {st.session_state['last_scan']['time']}")
-        st.markdown("点击 **开始扫描** 获取最新数据")
-
-# ============================================================================
-# 运行
-# ============================================================================
 
 if __name__ == "__main__":
     main()
