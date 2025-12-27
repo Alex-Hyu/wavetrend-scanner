@@ -375,7 +375,7 @@ def main():
     with st.sidebar:
         st.header("⚙️ 设置")
         
-        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 10)
+        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 1)
         ob_level = st.slider("超买阈值", 50, 80, 60)
         os_level = st.slider("超卖阈值", -80, -50, -60)
         include_extra = st.checkbox("包含高波动股票", value=True)
