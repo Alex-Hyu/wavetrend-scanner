@@ -317,20 +317,37 @@ def scan_single_stock(symbol):
             'div_details': div_details,
             'market_cap_b': round(market_cap / 1e9, 1) if market_cap else 0,
         }
-        
+        # 调试信息
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 扫描统计")
+    st.sidebar.markdown(f"- 总股票数: {len(symbols)}")
+    st.sidebar.markdown(f"- 数据获取失败: {skipped_no_data}")
+    st.sidebar.markdown(f"- 市值不足过滤: {skipped_market_cap}")
+    st.sidebar.markdown(f"- 最终结果: {len(results)}")
+    
+    return results
         return result
     except Exception as e:
         return None
 
 def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=None):
     results = []
+    skipped_no_data = 0
+    skipped_market_cap = 0
     
     for i, symbol in enumerate(symbols):
         if progress_bar:
             progress_bar.progress((i + 1) / len(symbols), f"扫描中: {symbol}")
         
         result = scan_single_stock(symbol)
-        if result and result['market_cap_b'] >= min_market_cap_b:
+        
+        if result is None:
+            skipped_no_data += 1
+            continue
+        
+        if result['market_cap_b'] < min_market_cap_b:
+            skipped_market_cap += 1
+            continue
             # 分类
             if result['wt1'] <= os_level:
                 result['signal'] = '🟢 超卖'
