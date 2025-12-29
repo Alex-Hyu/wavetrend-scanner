@@ -469,10 +469,10 @@ def main():
         st.session_state.scan_time = None
     
     # 侧边栏
-        with st.sidebar:
+    with st.sidebar:
         st.header("⚙️ 设置")
         
-        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 1)
+        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 10)
         ob_level = st.slider("超买阈值", 50, 80, 60)
         os_level = st.slider("超卖阈值", -80, -50, -60)
         
