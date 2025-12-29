@@ -411,11 +411,24 @@ def main():
         st.metric("股票池", f"{len(symbols)} 只")
     with col3:
         st.metric("市值筛选", f"≥ {min_market_cap}B")
-    
+
+    # 初始化 session state
+    if 'scan_results' not in st.session_state:
+        st.session_state.scan_results = None
+        st.session_state.scan_time = None
+
     if scan_button:
         progress_bar = st.progress(0, "准备扫描...")
         results = scan_all_stocks(symbols, min_market_cap, ob_level, os_level, progress_bar)
         progress_bar.empty()
+        
+        # 保存到 session state
+        st.session_state.scan_results = results
+        st.session_state.scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 显示结果（扫描后或之前保存的）
+    if st.session_state.scan_results:
+        results = st.session_state.scan_results
         
         # 分类并按评分排序
         oversold = sorted([r for r in results if r['signal_type'] == 'oversold'], key=lambda x: x['score'], reverse=True)
@@ -460,13 +473,9 @@ def main():
         def display_table(data):
             if data:
                 df = pd.DataFrame(data)
-                
-                # 添加背离列
                 df['背离'] = df.apply(lambda x: '✅底背离' if x.get('bullish_div') else ('✅顶背离' if x.get('bearish_div') else ''), axis=1)
-                
                 df = df[['score', 'stars', 'symbol', 'price', 'price_change', 'wt1', 'wt_direction', 'rsi', 'vol_status', '背离', 'cross', 'score_details', 'market_cap_b']]
                 df.columns = ['评分', '等级', '股票', '价格', '涨跌%', 'WT1', '方向', 'RSI', '成交量', '背离', '交叉', '评分详情', '市值(B)']
-                
                 st.dataframe(
                     df,
                     hide_index=True,
@@ -506,7 +515,4 @@ def main():
             display_table(all_sorted)
         
         st.markdown("---")
-        st.caption(f"⏰ 扫描完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-if __name__ == "__main__":
-    main()
+        st.caption(f"⏰ 扫描时间: {st.session_state.scan_time}")
