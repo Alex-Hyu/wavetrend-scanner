@@ -469,12 +469,16 @@ def main():
         st.session_state.scan_time = None
     
     # 侧边栏
-    with st.sidebar:
+        with st.sidebar:
         st.header("⚙️ 设置")
         
         min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 1)
         ob_level = st.slider("超买阈值", 50, 80, 60)
         os_level = st.slider("超卖阈值", -80, -50, -60)
+        
+        if st.button("🗑️ 清除缓存"):
+            st.cache_data.clear()
+            st.success("缓存已清除，请重新扫描")
         
         st.markdown("---")
         st.markdown("### 📖 评分说明 (满分9分)")
