@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 1. 股票池
+# 股票池
 # ============================================================================
 
 # 纳斯达克100
@@ -46,33 +46,31 @@ SP500_EXTRA = [
     "AFL", "CB", "CME", "ICE", "MCO", "SPGI", "MMC", "AON", "MSCI",
     # 医疗
     "UNH", "JNJ", "PFE", "LLY", "ABBV", "MRK", "TMO", "ABT", "DHR", "BMY",
-    "AMGN", "CVS", "ELV", "CI", "HCA", "HUM", "MCK", "CAH", "ZTS", "SYK",
-    "BSX", "MDT", "EW", "DXCM", "IDXX", "IQV", "A", "BIO", "TECH",
+    "CVS", "ELV", "CI", "HCA", "HUM", "MCK", "CAH", "ZTS", "SYK",
+    "BSX", "MDT", "EW", "IQV", "A", "BIO", "TECH",
     # 消费
-    "WMT", "HD", "MCD", "NKE", "LOW", "TGT", "SBUX", "TJX", "ORLY", "AZO",
-    "ROST", "DG", "DLTR", "CMG", "YUM", "DPZ", "EBAY", "ETSY", "BBY",
+    "WMT", "HD", "MCD", "NKE", "LOW", "TGT", "TJX", "AZO",
+    "DG", "CMG", "YUM", "DPZ", "EBAY", "ETSY", "BBY",
     "KMB", "CL", "PG", "KO", "MO", "PM", "EL", "CLX", "CHD", "SJM",
     # 工业
-    "CAT", "BA", "HON", "UPS", "RTX", "DE", "LMT", "GE", "MMM", "EMR",
-    "ITW", "PH", "ROK", "ETN", "PCAR", "CMI", "WM", "RSG", "FDX", "NSC",
-    "UNP", "CSX", "DAL", "UAL", "LUV", "AAL",
+    "CAT", "BA", "UPS", "RTX", "DE", "LMT", "GE", "MMM", "EMR",
+    "ITW", "PH", "ROK", "ETN", "CMI", "WM", "RSG", "FDX", "NSC",
+    "UNP", "DAL", "UAL", "LUV", "AAL",
     # 能源
     "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "PXD",
     "DVN", "HES", "HAL", "KMI", "WMB", "OKE",
     # 通信/媒体
-    "DIS", "CMCSA", "T", "VZ", "CHTR", "NFLX", "PARA", "FOX", "FOXA",
-    "OMC", "IPG",
+    "DIS", "T", "VZ", "PARA", "FOX", "FOXA", "OMC", "IPG",
     # 公用事业
-    "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "PEG", "ED",
-    "WEC", "ES", "AWK",
+    "NEE", "DUK", "SO", "D", "SRE", "PEG", "ED", "WEC", "ES", "AWK",
     # 材料
     "LIN", "APD", "SHW", "ECL", "DD", "NEM", "FCX", "NUE", "VMC", "MLM",
     # 房地产
     "AMT", "PLD", "CCI", "EQIX", "PSA", "SPG", "O", "WELL", "DLR", "AVB",
     "EQR", "VTR", "ARE", "MAA", "UDR",
     # 其他大盘
-    "BRK-B", "V", "MA", "ACN", "CRM", "ORCL", "IBM", "NOW", "UBER", "ABNB",
-    "SQ", "SHOP", "SNOW", "DDOG", "NET", "ZM", "DOCU", "OKTA", "TWLO"
+    "BRK-B", "V", "MA", "ACN", "CRM", "ORCL", "IBM", "NOW", "UBER",
+    "SQ", "SHOP", "SNOW", "NET", "ZM", "DOCU", "OKTA", "TWLO"
 ]
 
 # 高波动/主题股票
@@ -364,6 +362,100 @@ def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=
     return results
 
 # ============================================================================
+# 显示结果函数
+# ============================================================================
+
+def display_results(results, scan_time):
+    """显示扫描结果"""
+    
+    # 分类并按评分排序
+    oversold = sorted([r for r in results if r['signal_type'] == 'oversold'], key=lambda x: x['score'], reverse=True)
+    overbought = sorted([r for r in results if r['signal_type'] == 'overbought'], key=lambda x: x['score'], reverse=True)
+    approaching_os = sorted([r for r in results if r['signal_type'] == 'approaching_os'], key=lambda x: x['score'], reverse=True)
+    approaching_ob = sorted([r for r in results if r['signal_type'] == 'approaching_ob'], key=lambda x: x['score'], reverse=True)
+    
+    # 统计
+    st.markdown("---")
+    st.subheader("📈 扫描结果统计")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("🟢 超卖", len(oversold))
+    with col2:
+        st.metric("🟡 接近超卖", len(approaching_os))
+    with col3:
+        st.metric("🔴 超买", len(overbought))
+    with col4:
+        st.metric("🟡 接近超买", len(approaching_ob))
+    
+    # 高评分提示
+    high_score_os = [r for r in oversold if r['score'] >= 3]
+    high_score_ob = [r for r in overbought if r['score'] >= 3]
+    
+    if high_score_os:
+        st.success(f"⭐ 高评分做多机会 (≥3分): **{', '.join([r['symbol'] for r in high_score_os])}**")
+    if high_score_ob:
+        st.warning(f"⭐ 高评分见顶/止盈 (≥3分): **{', '.join([r['symbol'] for r in high_score_ob])}**")
+    
+    st.markdown("---")
+    
+    # Tab 显示
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        f"🟢 超卖 ({len(oversold)})",
+        f"🟡 接近超卖 ({len(approaching_os)})",
+        f"🔴 超买 ({len(overbought)})",
+        f"🟡 接近超买 ({len(approaching_ob)})",
+        "📋 全部"
+    ])
+    
+    def display_table(data):
+        if data:
+            df = pd.DataFrame(data)
+            df['背离'] = df.apply(lambda x: '✅底背离' if x.get('bullish_div') else ('✅顶背离' if x.get('bearish_div') else ''), axis=1)
+            df = df[['score', 'stars', 'symbol', 'price', 'price_change', 'wt1', 'wt_direction', 'rsi', 'vol_status', '背离', 'cross', 'score_details', 'market_cap_b']]
+            df.columns = ['评分', '等级', '股票', '价格', '涨跌%', 'WT1', '方向', 'RSI', '成交量', '背离', '交叉', '评分详情', '市值(B)']
+            st.dataframe(
+                df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "价格": st.column_config.NumberColumn(format="$%.2f"),
+                    "涨跌%": st.column_config.NumberColumn(format="%.2f%%"),
+                    "WT1": st.column_config.NumberColumn(format="%.2f"),
+                    "RSI": st.column_config.NumberColumn(format="%.1f"),
+                    "市值(B)": st.column_config.NumberColumn(format="%.1f"),
+                }
+            )
+        else:
+            st.info("没有符合条件的股票")
+    
+    with tab1:
+        st.subheader("🟢 超卖股票 (WT1 ≤ -60) - 按评分排序")
+        st.markdown("*潜在做多机会，评分越高反转可能性越大*")
+        display_table(oversold)
+    
+    with tab2:
+        st.subheader("🟡 接近超卖 (-60 < WT1 ≤ -53)")
+        display_table(approaching_os)
+    
+    with tab3:
+        st.subheader("🔴 超买股票 (WT1 ≥ 60) - 按评分排序")
+        st.markdown("*潜在见顶信号，考虑止盈或观望*")
+        display_table(overbought)
+    
+    with tab4:
+        st.subheader("🟡 接近超买 (53 ≤ WT1 < 60)")
+        display_table(approaching_ob)
+    
+    with tab5:
+        st.subheader("📋 全部扫描结果 - 按评分排序")
+        all_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
+        display_table(all_sorted)
+    
+    st.markdown("---")
+    st.caption(f"⏰ 扫描时间: {scan_time}")
+
+# ============================================================================
 # 主界面
 # ============================================================================
 
@@ -371,14 +463,18 @@ def main():
     st.title("📊 WaveTrend 扫描器 V2.0")
     st.markdown("**新增**: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分")
     
+    # 初始化 session state
+    if 'scan_results' not in st.session_state:
+        st.session_state.scan_results = None
+        st.session_state.scan_time = None
+    
     # 侧边栏
     with st.sidebar:
         st.header("⚙️ 设置")
         
-        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 1)
+        min_market_cap = st.slider("最小市值 (十亿美元)", 1, 100, 10)
         ob_level = st.slider("超买阈值", 50, 80, 60)
         os_level = st.slider("超卖阈值", -80, -50, -60)
-        include_extra = st.checkbox("包含高波动股票", value=True)
         
         st.markdown("---")
         st.markdown("### 📖 评分说明 (满分9分)")
@@ -402,7 +498,6 @@ def main():
     # 股票池
     symbols = ALL_STOCKS.copy()
     
-    
     # 扫描按钮
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
@@ -411,12 +506,8 @@ def main():
         st.metric("股票池", f"{len(symbols)} 只")
     with col3:
         st.metric("市值筛选", f"≥ {min_market_cap}B")
-
-    # 初始化 session state
-    if 'scan_results' not in st.session_state:
-        st.session_state.scan_results = None
-        st.session_state.scan_time = None
-
+    
+    # 扫描逻辑
     if scan_button:
         progress_bar = st.progress(0, "准备扫描...")
         results = scan_all_stocks(symbols, min_market_cap, ob_level, os_level, progress_bar)
@@ -425,94 +516,16 @@ def main():
         # 保存到 session state
         st.session_state.scan_results = results
         st.session_state.scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
+    
     # 显示结果（扫描后或之前保存的）
-    if st.session_state.scan_results:
-        results = st.session_state.scan_results
-        
-        # 分类并按评分排序
-        oversold = sorted([r for r in results if r['signal_type'] == 'oversold'], key=lambda x: x['score'], reverse=True)
-        overbought = sorted([r for r in results if r['signal_type'] == 'overbought'], key=lambda x: x['score'], reverse=True)
-        approaching_os = sorted([r for r in results if r['signal_type'] == 'approaching_os'], key=lambda x: x['score'], reverse=True)
-        approaching_ob = sorted([r for r in results if r['signal_type'] == 'approaching_ob'], key=lambda x: x['score'], reverse=True)
-        
-        # 统计
-        st.markdown("---")
-        st.subheader("📈 扫描结果统计")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🟢 超卖", len(oversold))
-        with col2:
-            st.metric("🟡 接近超卖", len(approaching_os))
-        with col3:
-            st.metric("🔴 超买", len(overbought))
-        with col4:
-            st.metric("🟡 接近超买", len(approaching_ob))
-        
-        # 高评分提示
-        high_score_os = [r for r in oversold if r['score'] >= 3]
-        high_score_ob = [r for r in overbought if r['score'] >= 3]
-        
-        if high_score_os:
-            st.success(f"⭐ 高评分做多机会 (≥3分): **{', '.join([r['symbol'] for r in high_score_os])}**")
-        if high_score_ob:
-            st.warning(f"⭐ 高评分见顶/止盈 (≥3分): **{', '.join([r['symbol'] for r in high_score_ob])}**")
-        
-        st.markdown("---")
-        
-        # Tab 显示
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            f"🟢 超卖 ({len(oversold)})",
-            f"🟡 接近超卖 ({len(approaching_os)})",
-            f"🔴 超买 ({len(overbought)})",
-            f"🟡 接近超买 ({len(approaching_ob)})",
-            "📋 全部"
-        ])
-        
-        def display_table(data):
-            if data:
-                df = pd.DataFrame(data)
-                df['背离'] = df.apply(lambda x: '✅底背离' if x.get('bullish_div') else ('✅顶背离' if x.get('bearish_div') else ''), axis=1)
-                df = df[['score', 'stars', 'symbol', 'price', 'price_change', 'wt1', 'wt_direction', 'rsi', 'vol_status', '背离', 'cross', 'score_details', 'market_cap_b']]
-                df.columns = ['评分', '等级', '股票', '价格', '涨跌%', 'WT1', '方向', 'RSI', '成交量', '背离', '交叉', '评分详情', '市值(B)']
-                st.dataframe(
-                    df,
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "价格": st.column_config.NumberColumn(format="$%.2f"),
-                        "涨跌%": st.column_config.NumberColumn(format="%.2f%%"),
-                        "WT1": st.column_config.NumberColumn(format="%.2f"),
-                        "RSI": st.column_config.NumberColumn(format="%.1f"),
-                        "市值(B)": st.column_config.NumberColumn(format="%.1f"),
-                    }
-                )
-            else:
-                st.info("没有符合条件的股票")
-        
-        with tab1:
-            st.subheader("🟢 超卖股票 (WT1 ≤ -60) - 按评分排序")
-            st.markdown("*潜在做多机会，评分越高反转可能性越大*")
-            display_table(oversold)
-        
-        with tab2:
-            st.subheader("🟡 接近超卖 (-60 < WT1 ≤ -53)")
-            display_table(approaching_os)
-        
-        with tab3:
-            st.subheader("🔴 超买股票 (WT1 ≥ 60) - 按评分排序")
-            st.markdown("*潜在见顶信号，考虑止盈或观望*")
-            display_table(overbought)
-        
-        with tab4:
-            st.subheader("🟡 接近超买 (53 ≤ WT1 < 60)")
-            display_table(approaching_ob)
-        
-        with tab5:
-            st.subheader("📋 全部扫描结果 - 按评分排序")
-            all_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
-            display_table(all_sorted)
-        
-        st.markdown("---")
-        st.caption(f"⏰ 扫描时间: {st.session_state.scan_time}")
+    if st.session_state.scan_results is not None:
+        display_results(st.session_state.scan_results, st.session_state.scan_time)
+    else:
+        st.info("👆 点击 **开始扫描** 按钮开始扫描股票")
+
+# ============================================================================
+# 运行
+# ============================================================================
+
+if __name__ == "__main__":
+    main()
