@@ -348,33 +348,42 @@ def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=
         if result['market_cap_b'] < min_market_cap_b:
             skipped_market_cap += 1
             continue
-            # 分类
-            if result['wt1'] <= os_level:
-                result['signal'] = '🟢 超卖'
-                result['signal_type'] = 'oversold'
-                score, details = calc_reversal_score(result, is_oversold=True)
-            elif result['wt1'] >= ob_level:
-                result['signal'] = '🔴 超买'
-                result['signal_type'] = 'overbought'
-                score, details = calc_reversal_score(result, is_oversold=False)
-            elif result['wt1'] <= -53:
-                result['signal'] = '🟡 接近超卖'
-                result['signal_type'] = 'approaching_os'
-                score, details = calc_reversal_score(result, is_oversold=True)
-            elif result['wt1'] >= 53:
-                result['signal'] = '🟡 接近超买'
-                result['signal_type'] = 'approaching_ob'
-                score, details = calc_reversal_score(result, is_oversold=False)
-            else:
-                result['signal'] = '⚪ 中性'
-                result['signal_type'] = 'neutral'
-                score, details = 0, []
-            
-            result['score'] = score
-            result['score_details'] = ', '.join(details)
-            result['grade'], result['stars'] = get_score_grade(score)
-            
-            results.append(result)
+        
+        # 分类
+        if result['wt1'] <= os_level:
+            result['signal'] = '🟢 超卖'
+            result['signal_type'] = 'oversold'
+            score, details = calc_reversal_score(result, is_oversold=True)
+        elif result['wt1'] >= ob_level:
+            result['signal'] = '🔴 超买'
+            result['signal_type'] = 'overbought'
+            score, details = calc_reversal_score(result, is_oversold=False)
+        elif result['wt1'] <= -53:
+            result['signal'] = '🟡 接近超卖'
+            result['signal_type'] = 'approaching_os'
+            score, details = calc_reversal_score(result, is_oversold=True)
+        elif result['wt1'] >= 53:
+            result['signal'] = '🟡 接近超买'
+            result['signal_type'] = 'approaching_ob'
+            score, details = calc_reversal_score(result, is_oversold=False)
+        else:
+            result['signal'] = '⚪ 中性'
+            result['signal_type'] = 'neutral'
+            score, details = 0, []
+        
+        result['score'] = score
+        result['score_details'] = ', '.join(details)
+        result['grade'], result['stars'] = get_score_grade(score)
+        
+        results.append(result)
+    
+    # 调试信息
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 扫描统计")
+    st.sidebar.markdown(f"- 总股票数: {len(symbols)}")
+    st.sidebar.markdown(f"- 数据获取失败: {skipped_no_data}")
+    st.sidebar.markdown(f"- 市值不足过滤: {skipped_market_cap}")
+    st.sidebar.markdown(f"- 最终结果: {len(results)}")
     
     return results
 
