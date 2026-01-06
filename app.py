@@ -317,15 +317,7 @@ def scan_single_stock(symbol):
             'div_details': div_details,
             'market_cap_b': round(market_cap / 1e9, 1) if market_cap else 0,
         }
-        # 调试信息
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📊 扫描统计")
-    st.sidebar.markdown(f"- 总股票数: {len(symbols)}")
-    st.sidebar.markdown(f"- 数据获取失败: {skipped_no_data}")
-    st.sidebar.markdown(f"- 市值不足过滤: {skipped_market_cap}")
-    st.sidebar.markdown(f"- 最终结果: {len(results)}")
-    
-    return results
+        
         return result
     except Exception as e:
         return None
