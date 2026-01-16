@@ -1,24 +1,32 @@
 """
-WaveTrend 扫描器 V2.0 - Streamlit 网页界面
-新增: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分
+WaveTrend 扫描器 V3.0 - Streamlit 网页界面
+新增: 信号追踪模块 - 追踪30个交易日验证信号准确率
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import os
 
 # ============================================================================
 # 页面配置
 # ============================================================================
 
 st.set_page_config(
-    page_title="WaveTrend 扫描器 V2.0",
+    page_title="WaveTrend 扫描器 V3.0",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ============================================================================
+# 追踪数据文件路径
+# ============================================================================
+
+TRACKING_FILE = "tracking_data.json"
 
 # ============================================================================
 # 股票池
@@ -380,7 +388,287 @@ def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=
     return results
 
 # ============================================================================
-# 显示结果函数
+# 追踪模块
+# ============================================================================
+
+def load_tracking_data():
+    """加载追踪数据"""
+    if os.path.exists(TRACKING_FILE):
+        try:
+            with open(TRACKING_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {"bullish": [], "bearish": []}
+    return {"bullish": [], "bearish": []}
+
+def save_tracking_data(data):
+    """保存追踪数据"""
+    with open(TRACKING_FILE, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def get_current_price(symbol):
+    """获取当前价格"""
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="5d")
+        if len(df) > 0:
+            return round(df['Close'].iloc[-1], 2)
+    except:
+        pass
+    return None
+
+def get_trading_days_count(start_date_str):
+    """计算从开始日期到现在经过了多少个交易日"""
+    try:
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+        # 获取 SPY 的历史数据来计算交易日
+        spy = yf.Ticker("SPY")
+        df = spy.history(start=start_date, end=datetime.now())
+        return len(df)
+    except:
+        return 0
+
+def add_to_tracking(symbol, signal_type, d0_price, score, score_details):
+    """添加股票到追踪列表"""
+    data = load_tracking_data()
+    
+    new_entry = {
+        "symbol": symbol,
+        "d0_date": datetime.now().strftime('%Y-%m-%d'),
+        "d0_price": d0_price,
+        "score": score,
+        "score_details": score_details,
+        "current_price": d0_price,
+        "change_pct": 0,
+        "trading_days": 0,
+        "status": "追踪中",
+        "result": "待定"
+    }
+    
+    # 检查是否已存在
+    list_key = "bullish" if signal_type == "bullish" else "bearish"
+    existing_symbols = [item['symbol'] for item in data[list_key]]
+    
+    if symbol not in existing_symbols:
+        data[list_key].append(new_entry)
+        save_tracking_data(data)
+        return True
+    return False
+
+def update_tracking_data():
+    """更新所有追踪中的股票价格"""
+    data = load_tracking_data()
+    updated = False
+    
+    for list_key in ["bullish", "bearish"]:
+        for item in data[list_key]:
+            if item["status"] == "追踪中":
+                # 更新价格
+                current_price = get_current_price(item["symbol"])
+                if current_price:
+                    item["current_price"] = current_price
+                    item["change_pct"] = round((current_price / item["d0_price"] - 1) * 100, 2)
+                
+                # 更新交易日数
+                trading_days = get_trading_days_count(item["d0_date"])
+                item["trading_days"] = trading_days
+                
+                # 判断信号是否正确
+                if list_key == "bullish":
+                    # 做多信号：涨了就是正确
+                    if item["change_pct"] > 5:
+                        item["result"] = "✅ 正确"
+                    elif item["change_pct"] < -5:
+                        item["result"] = "❌ 错误"
+                    else:
+                        item["result"] = "⏳ 待定"
+                else:
+                    # 做空信号：跌了就是正确
+                    if item["change_pct"] < -5:
+                        item["result"] = "✅ 正确"
+                    elif item["change_pct"] > 5:
+                        item["result"] = "❌ 错误"
+                    else:
+                        item["result"] = "⏳ 待定"
+                
+                # 30个交易日后标记完成
+                if trading_days >= 30:
+                    item["status"] = "已完成"
+                
+                updated = True
+    
+    if updated:
+        save_tracking_data(data)
+    
+    return data
+
+def remove_from_tracking(symbol, signal_type):
+    """从追踪列表移除"""
+    data = load_tracking_data()
+    list_key = "bullish" if signal_type == "bullish" else "bearish"
+    data[list_key] = [item for item in data[list_key] if item["symbol"] != symbol]
+    save_tracking_data(data)
+
+def calculate_accuracy(data, list_key):
+    """计算准确率"""
+    completed = [item for item in data[list_key] if item["status"] == "已完成"]
+    if not completed:
+        return None, 0, 0
+    
+    correct = len([item for item in completed if "正确" in item["result"]])
+    total = len(completed)
+    accuracy = round(correct / total * 100, 1) if total > 0 else 0
+    
+    return accuracy, correct, total
+
+def display_tracking_module():
+    """显示追踪模块"""
+    st.markdown("---")
+    st.header("📈 信号追踪模块")
+    
+    # 更新按钮
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔄 刷新价格", type="primary"):
+            with st.spinner("更新价格中..."):
+                update_tracking_data()
+            st.success("价格已更新!")
+            st.rerun()
+    
+    # 加载数据
+    data = load_tracking_data()
+    
+    # 统计信息
+    st.subheader("📊 追踪统计")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    # 做多信号统计
+    bullish_accuracy, bullish_correct, bullish_total = calculate_accuracy(data, "bullish")
+    bearish_accuracy, bearish_correct, bearish_total = calculate_accuracy(data, "bearish")
+    
+    with col1:
+        st.metric("🟢 做多追踪中", len([i for i in data["bullish"] if i["status"] == "追踪中"]))
+    with col2:
+        if bullish_accuracy is not None:
+            st.metric("🟢 做多准确率", f"{bullish_accuracy}%", f"{bullish_correct}/{bullish_total}")
+        else:
+            st.metric("🟢 做多准确率", "暂无数据")
+    with col3:
+        st.metric("🔴 做空追踪中", len([i for i in data["bearish"] if i["status"] == "追踪中"]))
+    with col4:
+        if bearish_accuracy is not None:
+            st.metric("🔴 做空准确率", f"{bearish_accuracy}%", f"{bearish_correct}/{bearish_total}")
+        else:
+            st.metric("🔴 做空准确率", "暂无数据")
+    
+    # Tab 显示详情
+    tab1, tab2, tab3 = st.tabs(["🟢 做多信号追踪", "🔴 做空信号追踪", "📋 历史记录"])
+    
+    with tab1:
+        st.subheader("🟢 做多信号追踪 (超卖反转)")
+        bullish_tracking = [i for i in data["bullish"] if i["status"] == "追踪中"]
+        
+        if bullish_tracking:
+            df = pd.DataFrame(bullish_tracking)
+            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']]
+            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定']
+            
+            # 添加颜色
+            def color_change(val):
+                if isinstance(val, (int, float)):
+                    if val > 0:
+                        return 'color: green'
+                    elif val < 0:
+                        return 'color: red'
+                return ''
+            
+            st.dataframe(
+                df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "D0价格": st.column_config.NumberColumn(format="$%.2f"),
+                    "当前价格": st.column_config.NumberColumn(format="$%.2f"),
+                    "涨跌幅%": st.column_config.NumberColumn(format="%.2f%%"),
+                }
+            )
+            
+            # 移除按钮
+            st.markdown("**移除追踪：**")
+            cols = st.columns(min(len(bullish_tracking), 5))
+            for idx, item in enumerate(bullish_tracking[:5]):
+                with cols[idx]:
+                    if st.button(f"❌ {item['symbol']}", key=f"remove_bull_{item['symbol']}"):
+                        remove_from_tracking(item['symbol'], 'bullish')
+                        st.rerun()
+        else:
+            st.info("暂无做多信号在追踪中")
+    
+    with tab2:
+        st.subheader("🔴 做空信号追踪 (超买见顶)")
+        bearish_tracking = [i for i in data["bearish"] if i["status"] == "追踪中"]
+        
+        if bearish_tracking:
+            df = pd.DataFrame(bearish_tracking)
+            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']]
+            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定']
+            
+            st.dataframe(
+                df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "D0价格": st.column_config.NumberColumn(format="$%.2f"),
+                    "当前价格": st.column_config.NumberColumn(format="$%.2f"),
+                    "涨跌幅%": st.column_config.NumberColumn(format="%.2f%%"),
+                }
+            )
+            
+            # 移除按钮
+            st.markdown("**移除追踪：**")
+            cols = st.columns(min(len(bearish_tracking), 5))
+            for idx, item in enumerate(bearish_tracking[:5]):
+                with cols[idx]:
+                    if st.button(f"❌ {item['symbol']}", key=f"remove_bear_{item['symbol']}"):
+                        remove_from_tracking(item['symbol'], 'bearish')
+                        st.rerun()
+        else:
+            st.info("暂无做空信号在追踪中")
+    
+    with tab3:
+        st.subheader("📋 已完成追踪记录")
+        
+        completed_bullish = [i for i in data["bullish"] if i["status"] == "已完成"]
+        completed_bearish = [i for i in data["bearish"] if i["status"] == "已完成"]
+        
+        if completed_bullish:
+            st.markdown("**🟢 做多信号历史：**")
+            df = pd.DataFrame(completed_bullish)
+            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']]
+            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定']
+            st.dataframe(df, hide_index=True, use_container_width=True)
+        
+        if completed_bearish:
+            st.markdown("**🔴 做空信号历史：**")
+            df = pd.DataFrame(completed_bearish)
+            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']]
+            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定']
+            st.dataframe(df, hide_index=True, use_container_width=True)
+        
+        if not completed_bullish and not completed_bearish:
+            st.info("暂无已完成的追踪记录")
+        
+        # 清空历史按钮
+        if completed_bullish or completed_bearish:
+            if st.button("🗑️ 清空历史记录"):
+                data["bullish"] = [i for i in data["bullish"] if i["status"] != "已完成"]
+                data["bearish"] = [i for i in data["bearish"] if i["status"] != "已完成"]
+                save_tracking_data(data)
+                st.rerun()
+
+# ============================================================================
+# 显示结果函数（修改版，添加追踪按钮）
 # ============================================================================
 
 def display_results(results, scan_time):
@@ -406,14 +694,29 @@ def display_results(results, scan_time):
     with col4:
         st.metric("🟡 接近超买", len(approaching_ob))
     
-    # 高评分提示
+    # 高评分提示 + 一键追踪
     high_score_os = [r for r in oversold if r['score'] >= 3]
     high_score_ob = [r for r in overbought if r['score'] >= 3]
     
     if high_score_os:
         st.success(f"⭐ 高评分做多机会 (≥3分): **{', '.join([r['symbol'] for r in high_score_os])}**")
+        if st.button("📌 一键追踪所有做多信号", key="track_all_bullish"):
+            added = 0
+            for r in high_score_os:
+                if add_to_tracking(r['symbol'], 'bullish', r['price'], r['score'], r['score_details']):
+                    added += 1
+            st.success(f"已添加 {added} 只股票到做多追踪列表")
+            st.rerun()
+    
     if high_score_ob:
         st.warning(f"⭐ 高评分见顶/止盈 (≥3分): **{', '.join([r['symbol'] for r in high_score_ob])}**")
+        if st.button("📌 一键追踪所有做空信号", key="track_all_bearish"):
+            added = 0
+            for r in high_score_ob:
+                if add_to_tracking(r['symbol'], 'bearish', r['price'], r['score'], r['score_details']):
+                    added += 1
+            st.success(f"已添加 {added} 只股票到做空追踪列表")
+            st.rerun()
     
     st.markdown("---")
     
@@ -426,7 +729,7 @@ def display_results(results, scan_time):
         "📋 全部"
     ])
     
-    def display_table(data):
+    def display_table(data, signal_type=None):
         if data:
             df = pd.DataFrame(data)
             df['背离'] = df.apply(lambda x: '✅底背离' if x.get('bullish_div') else ('✅顶背离' if x.get('bearish_div') else ''), axis=1)
@@ -444,13 +747,25 @@ def display_results(results, scan_time):
                     "市值(B)": st.column_config.NumberColumn(format="%.1f"),
                 }
             )
+            
+            # 单独追踪按钮
+            if signal_type:
+                st.markdown("**添加到追踪：**")
+                cols = st.columns(min(len(data), 6))
+                for idx, item in enumerate(data[:6]):
+                    with cols[idx]:
+                        if st.button(f"📌 {item['symbol']}", key=f"track_{signal_type}_{item['symbol']}"):
+                            if add_to_tracking(item['symbol'], signal_type, item['price'], item['score'], item['score_details']):
+                                st.success(f"已添加 {item['symbol']}")
+                            else:
+                                st.warning(f"{item['symbol']} 已在追踪列表中")
         else:
             st.info("没有符合条件的股票")
     
     with tab1:
         st.subheader("🟢 超卖股票 (WT1 ≤ -60) - 按评分排序")
         st.markdown("*潜在做多机会，评分越高反转可能性越大*")
-        display_table(oversold)
+        display_table(oversold, "bullish")
     
     with tab2:
         st.subheader("🟡 接近超卖 (-60 < WT1 ≤ -53)")
@@ -459,7 +774,7 @@ def display_results(results, scan_time):
     with tab3:
         st.subheader("🔴 超买股票 (WT1 ≥ 60) - 按评分排序")
         st.markdown("*潜在见顶信号，考虑止盈或观望*")
-        display_table(overbought)
+        display_table(overbought, "bearish")
     
     with tab4:
         st.subheader("🟡 接近超买 (53 ≤ WT1 < 60)")
@@ -478,8 +793,8 @@ def display_results(results, scan_time):
 # ============================================================================
 
 def main():
-    st.title("📊 WaveTrend 扫描器 V2.0")
-    st.markdown("**新增**: 背离检测 | RSI双重确认 | 成交量分析 | 综合评分")
+    st.title("📊 WaveTrend 扫描器 V3.0")
+    st.markdown("**新增**: 信号追踪模块 - 追踪30个交易日验证信号准确率")
     
     # 初始化 session state
     if 'scan_results' not in st.session_state:
@@ -516,34 +831,55 @@ def main():
         - B级 (3-4分) ⭐⭐ 中等
         - C级 (2分) ⭐ 弱信号
         """)
-    
-    # 股票池
-    symbols = ALL_STOCKS.copy()
-    
-    # 扫描按钮
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        scan_button = st.button("🔍 开始扫描", type="primary", use_container_width=True)
-    with col2:
-        st.metric("股票池", f"{len(symbols)} 只")
-    with col3:
-        st.metric("市值筛选", f"≥ {min_market_cap}B")
-    
-    # 扫描逻辑
-    if scan_button:
-        progress_bar = st.progress(0, "准备扫描...")
-        results = scan_all_stocks(symbols, min_market_cap, ob_level, os_level, progress_bar)
-        progress_bar.empty()
         
-        # 保存到 session state
-        st.session_state.scan_results = results
-        st.session_state.scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        st.markdown("---")
+        st.markdown("### 📈 追踪判定标准")
+        st.markdown("""
+        **做多信号**:
+        - 涨幅 > 5% → ✅ 正确
+        - 跌幅 > 5% → ❌ 错误
+        
+        **做空信号**:
+        - 跌幅 > 5% → ✅ 正确
+        - 涨幅 > 5% → ❌ 错误
+        
+        **追踪周期**: 30个交易日
+        """)
     
-    # 显示结果（扫描后或之前保存的）
-    if st.session_state.scan_results is not None:
-        display_results(st.session_state.scan_results, st.session_state.scan_time)
-    else:
-        st.info("👆 点击 **开始扫描** 按钮开始扫描股票")
+    # 页面选择
+    page = st.radio("选择功能", ["📊 扫描", "📈 追踪"], horizontal=True, label_visibility="collapsed")
+    
+    if page == "📊 扫描":
+        # 股票池
+        symbols = ALL_STOCKS.copy()
+        
+        # 扫描按钮
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            scan_button = st.button("🔍 开始扫描", type="primary", use_container_width=True)
+        with col2:
+            st.metric("股票池", f"{len(symbols)} 只")
+        with col3:
+            st.metric("市值筛选", f"≥ {min_market_cap}B")
+        
+        # 扫描逻辑
+        if scan_button:
+            progress_bar = st.progress(0, "准备扫描...")
+            results = scan_all_stocks(symbols, min_market_cap, ob_level, os_level, progress_bar)
+            progress_bar.empty()
+            
+            # 保存到 session state
+            st.session_state.scan_results = results
+            st.session_state.scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 显示结果（扫描后或之前保存的）
+        if st.session_state.scan_results is not None:
+            display_results(st.session_state.scan_results, st.session_state.scan_time)
+        else:
+            st.info("👆 点击 **开始扫描** 按钮开始扫描股票")
+    
+    else:  # 追踪页面
+        display_tracking_module()
 
 # ============================================================================
 # 运行
