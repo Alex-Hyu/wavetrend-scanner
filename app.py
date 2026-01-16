@@ -1,6 +1,6 @@
 """
 WaveTrend 扫描器 V3.0 - Streamlit 网页界面
-新增: 信号追踪模块 - 追踪30个交易日验证信号准确率
+新增: 信号追踪模块 - 使用 Google Sheets 持久化存储
 """
 
 import streamlit as st
@@ -8,8 +8,8 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
-import json
-import os
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ============================================================================
 # 页面配置
@@ -23,10 +23,60 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 追踪数据文件路径
+# Google Sheets 配置
 # ============================================================================
 
-TRACKING_FILE = "tracking_data.json"
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+]
+
+# 从 Streamlit Secrets 读取 Google 凭证
+# 需要在 Streamlit Cloud 的 Secrets 中配置 [gcp_service_account]
+@st.cache_resource
+def get_google_client():
+    """获取 Google Sheets 客户端"""
+    try:
+        credentials = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=SCOPES
+        )
+        client = gspread.authorize(credentials)
+        return client
+    except Exception as e:
+        st.error(f"Google Sheets 连接失败: {e}")
+        return None
+
+@st.cache_resource
+def get_spreadsheet():
+    """获取或创建 Spreadsheet"""
+    client = get_google_client()
+    if not client:
+        return None, None, None
+    
+    try:
+        # 尝试打开已有的表格
+        spreadsheet = client.open("WaveTrend_Tracking")
+    except gspread.SpreadsheetNotFound:
+        # 创建新表格
+        spreadsheet = client.create("WaveTrend_Tracking")
+        # 分享给自己（可选）
+        # spreadsheet.share('your-email@gmail.com', perm_type='user', role='writer')
+    
+    # 获取或创建工作表
+    try:
+        bullish_sheet = spreadsheet.worksheet("Bullish")
+    except gspread.WorksheetNotFound:
+        bullish_sheet = spreadsheet.add_worksheet(title="Bullish", rows=1000, cols=10)
+        bullish_sheet.append_row(["symbol", "d0_date", "d0_price", "current_price", "change_pct", "trading_days", "score", "score_details", "status", "result"])
+    
+    try:
+        bearish_sheet = spreadsheet.worksheet("Bearish")
+    except gspread.WorksheetNotFound:
+        bearish_sheet = spreadsheet.add_worksheet(title="Bearish", rows=1000, cols=10)
+        bearish_sheet.append_row(["symbol", "d0_date", "d0_price", "current_price", "change_pct", "trading_days", "score", "score_details", "status", "result"])
+    
+    return spreadsheet, bullish_sheet, bearish_sheet
 
 # ============================================================================
 # 股票池
@@ -388,23 +438,82 @@ def scan_all_stocks(symbols, min_market_cap_b, ob_level, os_level, progress_bar=
     return results
 
 # ============================================================================
-# 追踪模块
+# Google Sheets 追踪模块
 # ============================================================================
 
-def load_tracking_data():
-    """加载追踪数据"""
-    if os.path.exists(TRACKING_FILE):
-        try:
-            with open(TRACKING_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {"bullish": [], "bearish": []}
-    return {"bullish": [], "bearish": []}
+def load_tracking_data_from_sheets():
+    """从 Google Sheets 加载追踪数据"""
+    _, bullish_sheet, bearish_sheet = get_spreadsheet()
+    
+    if not bullish_sheet or not bearish_sheet:
+        return {"bullish": [], "bearish": []}
+    
+    data = {"bullish": [], "bearish": []}
+    
+    try:
+        # 读取 Bullish 工作表
+        bullish_records = bullish_sheet.get_all_records()
+        data["bullish"] = bullish_records if bullish_records else []
+        
+        # 读取 Bearish 工作表
+        bearish_records = bearish_sheet.get_all_records()
+        data["bearish"] = bearish_records if bearish_records else []
+    except Exception as e:
+        st.error(f"读取数据失败: {e}")
+    
+    return data
 
-def save_tracking_data(data):
-    """保存追踪数据"""
-    with open(TRACKING_FILE, 'w') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+def save_to_sheets(sheet, item):
+    """保存一条记录到工作表"""
+    try:
+        row = [
+            item["symbol"],
+            item["d0_date"],
+            item["d0_price"],
+            item["current_price"],
+            item["change_pct"],
+            item["trading_days"],
+            item["score"],
+            item["score_details"],
+            item["status"],
+            item["result"]
+        ]
+        sheet.append_row(row)
+        return True
+    except Exception as e:
+        st.error(f"保存失败: {e}")
+        return False
+
+def update_sheet_row(sheet, row_index, item):
+    """更新工作表中的一行"""
+    try:
+        row = [
+            item["symbol"],
+            item["d0_date"],
+            item["d0_price"],
+            item["current_price"],
+            item["change_pct"],
+            item["trading_days"],
+            item["score"],
+            item["score_details"],
+            item["status"],
+            item["result"]
+        ]
+        # row_index + 2 因为：+1 是标题行，+1 是从1开始计数
+        sheet.update(f'A{row_index + 2}:J{row_index + 2}', [row])
+        return True
+    except Exception as e:
+        st.error(f"更新失败: {e}")
+        return False
+
+def delete_sheet_row(sheet, row_index):
+    """删除工作表中的一行"""
+    try:
+        sheet.delete_rows(row_index + 2)  # +2 因为标题行和从1开始计数
+        return True
+    except Exception as e:
+        st.error(f"删除失败: {e}")
+        return False
 
 def get_current_price(symbol):
     """获取当前价格"""
@@ -430,92 +539,121 @@ def get_trading_days_count(start_date_str):
 
 def add_to_tracking(symbol, signal_type, d0_price, score, score_details):
     """添加股票到追踪列表"""
-    data = load_tracking_data()
+    _, bullish_sheet, bearish_sheet = get_spreadsheet()
+    
+    if not bullish_sheet or not bearish_sheet:
+        st.error("无法连接 Google Sheets")
+        return False
+    
+    sheet = bullish_sheet if signal_type == "bullish" else bearish_sheet
+    
+    # 检查是否已存在
+    try:
+        existing = sheet.col_values(1)  # 第一列是 symbol
+        if symbol in existing:
+            return False
+    except:
+        pass
     
     new_entry = {
         "symbol": symbol,
         "d0_date": datetime.now().strftime('%Y-%m-%d'),
         "d0_price": d0_price,
-        "score": score,
-        "score_details": score_details,
         "current_price": d0_price,
         "change_pct": 0,
         "trading_days": 0,
+        "score": score,
+        "score_details": score_details,
         "status": "追踪中",
         "result": "待定"
     }
     
-    # 检查是否已存在
-    list_key = "bullish" if signal_type == "bullish" else "bearish"
-    existing_symbols = [item['symbol'] for item in data[list_key]]
-    
-    if symbol not in existing_symbols:
-        data[list_key].append(new_entry)
-        save_tracking_data(data)
-        return True
-    return False
+    return save_to_sheets(sheet, new_entry)
 
 def update_tracking_data():
     """更新所有追踪中的股票价格"""
-    data = load_tracking_data()
-    updated = False
+    _, bullish_sheet, bearish_sheet = get_spreadsheet()
     
-    for list_key in ["bullish", "bearish"]:
-        for item in data[list_key]:
-            if item["status"] == "追踪中":
-                # 更新价格
-                current_price = get_current_price(item["symbol"])
-                if current_price:
-                    item["current_price"] = current_price
-                    item["change_pct"] = round((current_price / item["d0_price"] - 1) * 100, 2)
-                
-                # 更新交易日数
-                trading_days = get_trading_days_count(item["d0_date"])
-                item["trading_days"] = trading_days
-                
-                # 判断信号是否正确
-                if list_key == "bullish":
-                    # 做多信号：涨了就是正确
-                    if item["change_pct"] > 5:
-                        item["result"] = "✅ 正确"
-                    elif item["change_pct"] < -5:
-                        item["result"] = "❌ 错误"
-                    else:
-                        item["result"] = "⏳ 待定"
-                else:
-                    # 做空信号：跌了就是正确
-                    if item["change_pct"] < -5:
-                        item["result"] = "✅ 正确"
-                    elif item["change_pct"] > 5:
-                        item["result"] = "❌ 错误"
-                    else:
-                        item["result"] = "⏳ 待定"
-                
-                # 30个交易日后标记完成
-                if trading_days >= 30:
-                    item["status"] = "已完成"
-                
-                updated = True
+    if not bullish_sheet or not bearish_sheet:
+        return {"bullish": [], "bearish": []}
     
-    if updated:
-        save_tracking_data(data)
+    data = {"bullish": [], "bearish": []}
+    
+    for list_key, sheet in [("bullish", bullish_sheet), ("bearish", bearish_sheet)]:
+        try:
+            records = sheet.get_all_records()
+            
+            for idx, item in enumerate(records):
+                if item.get("status") == "追踪中":
+                    # 更新价格
+                    current_price = get_current_price(item["symbol"])
+                    if current_price:
+                        item["current_price"] = current_price
+                        d0_price = float(item["d0_price"]) if item["d0_price"] else current_price
+                        item["change_pct"] = round((current_price / d0_price - 1) * 100, 2)
+                    
+                    # 更新交易日数
+                    trading_days = get_trading_days_count(item["d0_date"])
+                    item["trading_days"] = trading_days
+                    
+                    # 判断信号是否正确
+                    change = item["change_pct"]
+                    if list_key == "bullish":
+                        if change > 5:
+                            item["result"] = "✅ 正确"
+                        elif change < -5:
+                            item["result"] = "❌ 错误"
+                        else:
+                            item["result"] = "⏳ 待定"
+                    else:
+                        if change < -5:
+                            item["result"] = "✅ 正确"
+                        elif change > 5:
+                            item["result"] = "❌ 错误"
+                        else:
+                            item["result"] = "⏳ 待定"
+                    
+                    # 30个交易日后标记完成
+                    if trading_days >= 30:
+                        item["status"] = "已完成"
+                    
+                    # 更新到 Google Sheets
+                    update_sheet_row(sheet, idx, item)
+                
+                data[list_key].append(item)
+        except Exception as e:
+            st.error(f"更新 {list_key} 数据失败: {e}")
     
     return data
 
 def remove_from_tracking(symbol, signal_type):
     """从追踪列表移除"""
-    data = load_tracking_data()
-    list_key = "bullish" if signal_type == "bullish" else "bearish"
-    data[list_key] = [item for item in data[list_key] if item["symbol"] != symbol]
-    save_tracking_data(data)
+    _, bullish_sheet, bearish_sheet = get_spreadsheet()
+    
+    if not bullish_sheet or not bearish_sheet:
+        return False
+    
+    sheet = bullish_sheet if signal_type == "bullish" else bearish_sheet
+    
+    try:
+        symbols = sheet.col_values(1)
+        if symbol in symbols:
+            row_index = symbols.index(symbol)
+            if row_index > 0:  # 跳过标题行
+                delete_sheet_row(sheet, row_index - 1)
+                return True
+    except Exception as e:
+        st.error(f"移除失败: {e}")
+    
+    return False
 
-def calculate_accuracy(data, list_key):
+def calculate_accuracy(items):
     """计算准确率"""
-    completed = [item for item in data[list_key] if item["status"] == "已完成"]
+    completed = [item for item in items if item.get("status") == "已完成"]
     if not completed:
         return None, 0, 0
     
-    correct = len([item for item in completed if "正确" in item["result"]])
+    correct = len([item for item in completed if "正确" in str(item.get("result", ""))])
     total = len(completed)
     accuracy = round(correct / total * 100, 1) if total > 0 else 0
     
@@ -525,6 +663,32 @@ def display_tracking_module():
     """显示追踪模块"""
     st.markdown("---")
     st.header("📈 信号追踪模块")
+    
+    # 检查 Google Sheets 连接
+    _, bullish_sheet, bearish_sheet = get_spreadsheet()
+    
+    if not bullish_sheet or not bearish_sheet:
+        st.error("⚠️ 无法连接 Google Sheets。请检查 Secrets 配置。")
+        st.markdown("""
+        ### 配置说明
+        
+        在 Streamlit Cloud 的 **Settings > Secrets** 中添加：
+        
+        ```toml
+        [gcp_service_account]
+        type = "service_account"
+        project_id = "your-project-id"
+        private_key_id = "..."
+        private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+        client_email = "...@...iam.gserviceaccount.com"
+        client_id = "..."
+        auth_uri = "https://accounts.google.com/o/oauth2/auth"
+        token_uri = "https://oauth2.googleapis.com/token"
+        auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+        client_x509_cert_url = "..."
+        ```
+        """)
+        return
     
     # 更新按钮
     col1, col2 = st.columns([1, 4])
@@ -536,26 +700,29 @@ def display_tracking_module():
             st.rerun()
     
     # 加载数据
-    data = load_tracking_data()
+    data = load_tracking_data_from_sheets()
     
     # 统计信息
     st.subheader("📊 追踪统计")
     
     col1, col2, col3, col4 = st.columns(4)
     
-    # 做多信号统计
-    bullish_accuracy, bullish_correct, bullish_total = calculate_accuracy(data, "bullish")
-    bearish_accuracy, bearish_correct, bearish_total = calculate_accuracy(data, "bearish")
+    # 计算准确率
+    bullish_accuracy, bullish_correct, bullish_total = calculate_accuracy(data["bullish"])
+    bearish_accuracy, bearish_correct, bearish_total = calculate_accuracy(data["bearish"])
+    
+    bullish_tracking = [i for i in data["bullish"] if i.get("status") == "追踪中"]
+    bearish_tracking = [i for i in data["bearish"] if i.get("status") == "追踪中"]
     
     with col1:
-        st.metric("🟢 做多追踪中", len([i for i in data["bullish"] if i["status"] == "追踪中"]))
+        st.metric("🟢 做多追踪中", len(bullish_tracking))
     with col2:
         if bullish_accuracy is not None:
             st.metric("🟢 做多准确率", f"{bullish_accuracy}%", f"{bullish_correct}/{bullish_total}")
         else:
             st.metric("🟢 做多准确率", "暂无数据")
     with col3:
-        st.metric("🔴 做空追踪中", len([i for i in data["bearish"] if i["status"] == "追踪中"]))
+        st.metric("🔴 做空追踪中", len(bearish_tracking))
     with col4:
         if bearish_accuracy is not None:
             st.metric("🔴 做空准确率", f"{bearish_accuracy}%", f"{bearish_correct}/{bearish_total}")
@@ -567,31 +734,17 @@ def display_tracking_module():
     
     with tab1:
         st.subheader("🟢 做多信号追踪 (超卖反转)")
-        bullish_tracking = [i for i in data["bullish"] if i["status"] == "追踪中"]
         
         if bullish_tracking:
             df = pd.DataFrame(bullish_tracking)
-            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']]
-            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定']
-            
-            # 添加颜色
-            def color_change(val):
-                if isinstance(val, (int, float)):
-                    if val > 0:
-                        return 'color: green'
-                    elif val < 0:
-                        return 'color: red'
-                return ''
+            display_cols = ['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']
+            df = df[[c for c in display_cols if c in df.columns]]
+            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定'][:len(df.columns)]
             
             st.dataframe(
                 df,
                 hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "D0价格": st.column_config.NumberColumn(format="$%.2f"),
-                    "当前价格": st.column_config.NumberColumn(format="$%.2f"),
-                    "涨跌幅%": st.column_config.NumberColumn(format="%.2f%%"),
-                }
+                use_container_width=True
             )
             
             # 移除按钮
@@ -607,22 +760,17 @@ def display_tracking_module():
     
     with tab2:
         st.subheader("🔴 做空信号追踪 (超买见顶)")
-        bearish_tracking = [i for i in data["bearish"] if i["status"] == "追踪中"]
         
         if bearish_tracking:
             df = pd.DataFrame(bearish_tracking)
-            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']]
-            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定']
+            display_cols = ['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'trading_days', 'score', 'result']
+            df = df[[c for c in display_cols if c in df.columns]]
+            df.columns = ['股票', '信号日期', 'D0价格', '当前价格', '涨跌幅%', '交易日', '评分', '判定'][:len(df.columns)]
             
             st.dataframe(
                 df,
                 hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "D0价格": st.column_config.NumberColumn(format="$%.2f"),
-                    "当前价格": st.column_config.NumberColumn(format="$%.2f"),
-                    "涨跌幅%": st.column_config.NumberColumn(format="%.2f%%"),
-                }
+                use_container_width=True
             )
             
             # 移除按钮
@@ -639,36 +787,30 @@ def display_tracking_module():
     with tab3:
         st.subheader("📋 已完成追踪记录")
         
-        completed_bullish = [i for i in data["bullish"] if i["status"] == "已完成"]
-        completed_bearish = [i for i in data["bearish"] if i["status"] == "已完成"]
+        completed_bullish = [i for i in data["bullish"] if i.get("status") == "已完成"]
+        completed_bearish = [i for i in data["bearish"] if i.get("status") == "已完成"]
         
         if completed_bullish:
             st.markdown("**🟢 做多信号历史：**")
             df = pd.DataFrame(completed_bullish)
-            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']]
-            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定']
+            display_cols = ['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']
+            df = df[[c for c in display_cols if c in df.columns]]
+            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定'][:len(df.columns)]
             st.dataframe(df, hide_index=True, use_container_width=True)
         
         if completed_bearish:
             st.markdown("**🔴 做空信号历史：**")
             df = pd.DataFrame(completed_bearish)
-            df = df[['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']]
-            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定']
+            display_cols = ['symbol', 'd0_date', 'd0_price', 'current_price', 'change_pct', 'score', 'result']
+            df = df[[c for c in display_cols if c in df.columns]]
+            df.columns = ['股票', '信号日期', 'D0价格', '最终价格', '涨跌幅%', '评分', '判定'][:len(df.columns)]
             st.dataframe(df, hide_index=True, use_container_width=True)
         
         if not completed_bullish and not completed_bearish:
             st.info("暂无已完成的追踪记录")
-        
-        # 清空历史按钮
-        if completed_bullish or completed_bearish:
-            if st.button("🗑️ 清空历史记录"):
-                data["bullish"] = [i for i in data["bullish"] if i["status"] != "已完成"]
-                data["bearish"] = [i for i in data["bearish"] if i["status"] != "已完成"]
-                save_tracking_data(data)
-                st.rerun()
 
 # ============================================================================
-# 显示结果函数（修改版，添加追踪按钮）
+# 显示结果函数
 # ============================================================================
 
 def display_results(results, scan_time):
@@ -794,7 +936,7 @@ def display_results(results, scan_time):
 
 def main():
     st.title("📊 WaveTrend 扫描器 V3.0")
-    st.markdown("**新增**: 信号追踪模块 - 追踪30个交易日验证信号准确率")
+    st.markdown("**新增**: 信号追踪模块 - Google Sheets 持久化存储")
     
     # 初始化 session state
     if 'scan_results' not in st.session_state:
@@ -872,7 +1014,7 @@ def main():
             st.session_state.scan_results = results
             st.session_state.scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # 显示结果（扫描后或之前保存的）
+        # 显示结果
         if st.session_state.scan_results is not None:
             display_results(st.session_state.scan_results, st.session_state.scan_time)
         else:
